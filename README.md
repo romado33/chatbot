@@ -18,6 +18,12 @@ A simple Streamlit app that shows how to build a chatbot using OpenAI's GPT-3.5.
    $ streamlit run streamlit_app.py
    ```
 
+3. Provide your OpenAI API key by one of these methods:
+
+   - Set an `OPENAI_API_KEY` environment variable.
+   - Add an `OPENAI_API_KEY` entry to `.streamlit/secrets.toml`.
+   - Enter the key manually when the app prompts for it.
+
 ### Conversation history
 
 Chat messages are stored in a local SQLite database (`chat_history.db`). Use the sidebar controls to reset the conversation or export the history as a JSON file.

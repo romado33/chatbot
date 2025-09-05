@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import logging
+import os
 from pathlib import Path
 import streamlit as st
 import openai
@@ -136,10 +137,13 @@ def clear_history():
     st.session_state.admin_tasks = []
 
 
-# Ask user for their OpenAI API key via `st.text_input`.
-# Alternatively, you can store the API key in `./.streamlit/secrets.toml` and access it
-# via `st.secrets`, see https://docs.streamlit.io/develop/concepts/connections/secrets-management
-openai_api_key = st.text_input("OpenAI API Key", type="password")
+# Retrieve OpenAI API key from Streamlit secrets or environment variables.
+openai_api_key = st.secrets.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+
+# If no key is found, ask the user for it via `st.text_input`.
+if not openai_api_key:
+    openai_api_key = st.text_input("OpenAI API Key", type="password")
+
 if not openai_api_key:
     st.info("Please add your OpenAI API key to continue.", icon="🗝️")
 else:
