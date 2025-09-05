@@ -137,6 +137,55 @@ def clear_history():
     st.session_state.admin_tasks = []
 
 
+def handle_explicit_command(prompt: str) -> str | None:
+    """Execute assistant tools when the user issues a slash command.
+
+    Commands
+    --------
+    /schedule <topic>|<time>
+        Schedule a meeting.
+    /email <recipient>|<subject>|<body>
+        Send a mock email.
+    /todo add <task> | /todo list | /todo clear
+        Manage to-do items.
+    """
+
+    if prompt.startswith("/schedule"):
+        try:
+            _, rest = prompt.split(" ", 1)
+            topic, time = [s.strip() for s in rest.split("|", 1)]
+        except ValueError:
+            return "Usage: /schedule <topic>|<time>"
+        return schedule_meeting(topic=topic, time=time)
+
+    if prompt.startswith("/email"):
+        try:
+            _, rest = prompt.split(" ", 1)
+            recipient, subject, body = [s.strip() for s in rest.split("|", 2)]
+        except ValueError:
+            return "Usage: /email <recipient>|<subject>|<body>"
+        return send_email(recipient=recipient, subject=subject, body=body)
+
+    if prompt.startswith("/todo"):
+        parts = prompt.split(" ", 2)
+        if len(parts) < 2:
+            return "Usage: /todo add <task> | /todo list | /todo clear"
+        action = parts[1]
+        if action == "add" and len(parts) == 3:
+            result = manage_todo("add", task=parts[2].strip())
+            # refresh cache
+            _, st.session_state.admin_tasks = load_history()
+            return result
+        if action in {"list", "clear"}:
+            result = manage_todo(action)
+            if action != "list":
+                _, st.session_state.admin_tasks = load_history()
+            return result
+        return "Usage: /todo add <task> | /todo list | /todo clear"
+
+    return None
+
+
 # Retrieve OpenAI API key from Streamlit secrets or environment variables.
 openai_api_key = st.secrets.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
 
@@ -184,67 +233,74 @@ else:
             st.markdown(prompt)
         save_message("user", prompt)
 
-        # Prepare message history for the API call.
-        history = [
-            {"role": m["role"], "content": m["content"]}
-            for m in st.session_state.messages
-        ]
+        # Check for explicit slash commands before calling the model.
+        if command_response := handle_explicit_command(prompt):
+            with st.chat_message("assistant"):
+                st.markdown(command_response)
+            st.session_state.messages.append({"role": "assistant", "content": command_response})
+            save_message("assistant", command_response)
+        else:
+            # Prepare message history for the API call.
+            history = [
+                {"role": m["role"], "content": m["content"]}
+                for m in st.session_state.messages
+            ]
 
-        try:
-            # Ask the model for a response, allowing it to call tools.
-            first_response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=history,
-                tools=TOOLS,
-            )
-
-            message = first_response.choices[0].message
-
-            if message.tool_calls:
-                history.append(
-                    {
-                        "role": "assistant",
-                        "content": message.content or "",
-                        "tool_calls": [tc.model_dump() for tc in message.tool_calls],
-                    }
+            try:
+                # Ask the model for a response, allowing it to call tools.
+                first_response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=history,
+                    tools=TOOLS,
                 )
 
-                for tool_call in message.tool_calls:
-                    name = tool_call.function.name
-                    args = json.loads(tool_call.function.arguments)
-                    if name == "schedule_meeting":
-                        result = schedule_meeting(**args)
-                    elif name == "send_email":
-                        result = send_email(**args)
-                    elif name == "manage_todo":
-                        result = manage_todo(**args)
-                        # Refresh cached tasks after modification
-                        _, st.session_state.admin_tasks = load_history()
-                    else:
-                        result = f"Function {name} not implemented."
+                message = first_response.choices[0].message
+
+                if message.tool_calls:
                     history.append(
                         {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": result,
+                            "role": "assistant",
+                            "content": message.content or "",
+                            "tool_calls": [tc.model_dump() for tc in message.tool_calls],
                         }
                     )
 
-                second_response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=history,
-                )
-                final_content = second_response.choices[0].message.content
-            else:
-                final_content = message.content
+                    for tool_call in message.tool_calls:
+                        name = tool_call.function.name
+                        args = json.loads(tool_call.function.arguments)
+                        if name == "schedule_meeting":
+                            result = schedule_meeting(**args)
+                        elif name == "send_email":
+                            result = send_email(**args)
+                        elif name == "manage_todo":
+                            result = manage_todo(**args)
+                            # Refresh cached tasks after modification
+                            _, st.session_state.admin_tasks = load_history()
+                        else:
+                            result = f"Function {name} not implemented."
+                        history.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": result,
+                            }
+                        )
 
-            with st.chat_message("assistant"):
-                st.markdown(final_content)
-            st.session_state.messages.append({"role": "assistant", "content": final_content})
-            save_message("assistant", final_content)
-        except openai.APIError as e:
-            st.error(f"OpenAI API error: {e}")
-            logger.exception("OpenAI API error during chat completion")
-        except Exception:
-            st.error("An unexpected error occurred. Please try again later.")
-            logger.exception("Unexpected error during chat completion")
+                    second_response = client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=history,
+                    )
+                    final_content = second_response.choices[0].message.content
+                else:
+                    final_content = message.content
+
+                with st.chat_message("assistant"):
+                    st.markdown(final_content)
+                st.session_state.messages.append({"role": "assistant", "content": final_content})
+                save_message("assistant", final_content)
+            except openai.APIError as e:
+                st.error(f"OpenAI API error: {e}")
+                logger.exception("OpenAI API error during chat completion")
+            except Exception:
+                st.error("An unexpected error occurred. Please try again later.")
+                logger.exception("Unexpected error during chat completion")
