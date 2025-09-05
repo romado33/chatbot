@@ -260,7 +260,13 @@ else:
                     messages=history,
                     tools=TOOLS,
                 )
-
+            except openai.APIError as e:
+                st.error(f"OpenAI API error: {e}")
+                logger.exception("OpenAI API error during chat completion")
+            except Exception:
+                st.error("An unexpected error occurred. Please try again later.")
+                logger.exception("Unexpected error during chat completion")
+            else:
                 message = first_response.choices[0].message
 
                 if message.tool_calls:
@@ -293,21 +299,23 @@ else:
                             }
                         )
 
-                    second_response = client.chat.completions.create(
+                try:
+                    stream = client.chat.completions.create(
                         model="gpt-3.5-turbo",
                         messages=history,
+                        stream=True,
                     )
-                    final_content = second_response.choices[0].message.content
-                else:
-                    final_content = message.content
-
-                with st.chat_message("assistant"):
-                    st.markdown(final_content)
-                st.session_state.messages.append({"role": "assistant", "content": final_content})
-                save_message("assistant", final_content)
-            except openai.APIError as e:
-                st.error(f"OpenAI API error: {e}")
-                logger.exception("OpenAI API error during chat completion")
-            except Exception:
-                st.error("An unexpected error occurred. Please try again later.")
-                logger.exception("Unexpected error during chat completion")
+                    with st.chat_message("assistant"):
+                        final_content = st.write_stream(
+                            chunk.choices[0].delta.content or "" for chunk in stream
+                        )
+                    st.session_state.messages.append(
+                        {"role": "assistant", "content": final_content}
+                    )
+                    save_message("assistant", final_content)
+                except openai.APIError as e:
+                    st.error(f"OpenAI API error: {e}")
+                    logger.exception("OpenAI API error during response streaming")
+                except Exception:
+                    st.error("An unexpected error occurred. Please try again later.")
+                    logger.exception("Unexpected error during response streaming")
