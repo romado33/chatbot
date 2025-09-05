@@ -187,7 +187,9 @@ def handle_explicit_command(prompt: str) -> str | None:
 
 
 # Retrieve OpenAI API key from Streamlit secrets or environment variables.
-openai_api_key = st.secrets.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+openai_api_key = st.secrets.get("OPENAI_API_KEY")
+if not openai_api_key:
+    openai_api_key = os.environ.get("OPENAI_API_KEY")
 
 # If no key is found, ask the user for it via `st.text_input`.
 if not openai_api_key:
