@@ -4,6 +4,64 @@ from pathlib import Path
 import streamlit as st
 from openai import OpenAI
 
+from assistant_tools import manage_todo, schedule_meeting, send_email
+
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "schedule_meeting",
+            "description": "Schedule a meeting given a topic and time",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "description": "Topic of the meeting"},
+                    "time": {"type": "string", "description": "When the meeting takes place"},
+                },
+                "required": ["topic", "time"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "send_email",
+            "description": "Send a simple email",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "recipient": {"type": "string", "description": "Email recipient"},
+                    "subject": {"type": "string", "description": "Email subject"},
+                    "body": {"type": "string", "description": "Email body"},
+                },
+                "required": ["recipient", "subject", "body"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_todo",
+            "description": "Add, list, or clear todo items",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "add, list, or clear tasks",
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "Task description (required for add)",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+]
+
 # Show title and description.
 st.title("💬 Chatbot")
 st.write(
@@ -117,19 +175,60 @@ else:
             st.markdown(prompt)
         save_message("user", prompt)
 
-        # Generate a response using the OpenAI API.
-        stream = client.chat.completions.create(
+        # Prepare message history for the API call.
+        history = [
+            {"role": m["role"], "content": m["content"]}
+            for m in st.session_state.messages
+        ]
+
+        # Ask the model for a response, allowing it to call tools.
+        first_response = client.chat.completions.create(
             model="gpt-3.5-turbo",
-            messages=[
-                {"role": m["role"], "content": m["content"]}
-                for m in st.session_state.messages
-            ],
-            stream=True,
+            messages=history,
+            tools=TOOLS,
         )
 
-        # Stream the response to the chat using `st.write_stream`, then store it in
-        # session state.
+        message = first_response.choices[0].message
+
+        if message.tool_calls:
+            history.append(
+                {
+                    "role": "assistant",
+                    "content": message.content or "",
+                    "tool_calls": [tc.model_dump() for tc in message.tool_calls],
+                }
+            )
+
+            for tool_call in message.tool_calls:
+                name = tool_call.function.name
+                args = json.loads(tool_call.function.arguments)
+                if name == "schedule_meeting":
+                    result = schedule_meeting(**args)
+                elif name == "send_email":
+                    result = send_email(**args)
+                elif name == "manage_todo":
+                    result = manage_todo(**args)
+                    # Refresh cached tasks after modification
+                    _, st.session_state.admin_tasks = load_history()
+                else:
+                    result = f"Function {name} not implemented."
+                history.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": result,
+                    }
+                )
+
+            second_response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=history,
+            )
+            final_content = second_response.choices[0].message.content
+        else:
+            final_content = message.content
+
         with st.chat_message("assistant"):
-            response = st.write_stream(stream)
-        st.session_state.messages.append({"role": "assistant", "content": response})
-        save_message("assistant", response)
+            st.markdown(final_content)
+        st.session_state.messages.append({"role": "assistant", "content": final_content})
+        save_message("assistant", final_content)
