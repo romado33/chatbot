@@ -20,9 +20,12 @@ A simple Streamlit app that shows how to build a chatbot using OpenAI's GPT-3.5.
 
 3. Provide your OpenAI API key by one of these methods:
 
-   - Set an `OPENAI_API_KEY` environment variable.
    - Add an `OPENAI_API_KEY` entry to `.streamlit/secrets.toml`.
+   - Set an `OPENAI_API_KEY` environment variable.
    - Enter the key manually when the app prompts for it.
+
+   The app checks Streamlit secrets first, then environment variables, and only
+   prompts for manual entry if a key isn't found.
 
 ### Conversation history
 
