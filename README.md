@@ -17,3 +17,7 @@ A simple Streamlit app that shows how to build a chatbot using OpenAI's GPT-3.5.
    ```
    $ streamlit run streamlit_app.py
    ```
+
+### Conversation history
+
+Chat messages are stored in a local SQLite database (`chat_history.db`). Use the sidebar controls to reset the conversation or export the history as a JSON file.
