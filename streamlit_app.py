@@ -1,10 +1,15 @@
 import json
 import sqlite3
+import logging
 from pathlib import Path
 import streamlit as st
+import openai
 from openai import OpenAI
 
 from assistant_tools import manage_todo, schedule_meeting, send_email
+
+
+logger = logging.getLogger(__name__)
 
 
 TOOLS = [
@@ -181,54 +186,61 @@ else:
             for m in st.session_state.messages
         ]
 
-        # Ask the model for a response, allowing it to call tools.
-        first_response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=history,
-            tools=TOOLS,
-        )
-
-        message = first_response.choices[0].message
-
-        if message.tool_calls:
-            history.append(
-                {
-                    "role": "assistant",
-                    "content": message.content or "",
-                    "tool_calls": [tc.model_dump() for tc in message.tool_calls],
-                }
+        try:
+            # Ask the model for a response, allowing it to call tools.
+            first_response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=history,
+                tools=TOOLS,
             )
 
-            for tool_call in message.tool_calls:
-                name = tool_call.function.name
-                args = json.loads(tool_call.function.arguments)
-                if name == "schedule_meeting":
-                    result = schedule_meeting(**args)
-                elif name == "send_email":
-                    result = send_email(**args)
-                elif name == "manage_todo":
-                    result = manage_todo(**args)
-                    # Refresh cached tasks after modification
-                    _, st.session_state.admin_tasks = load_history()
-                else:
-                    result = f"Function {name} not implemented."
+            message = first_response.choices[0].message
+
+            if message.tool_calls:
                 history.append(
                     {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": result,
+                        "role": "assistant",
+                        "content": message.content or "",
+                        "tool_calls": [tc.model_dump() for tc in message.tool_calls],
                     }
                 )
 
-            second_response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=history,
-            )
-            final_content = second_response.choices[0].message.content
-        else:
-            final_content = message.content
+                for tool_call in message.tool_calls:
+                    name = tool_call.function.name
+                    args = json.loads(tool_call.function.arguments)
+                    if name == "schedule_meeting":
+                        result = schedule_meeting(**args)
+                    elif name == "send_email":
+                        result = send_email(**args)
+                    elif name == "manage_todo":
+                        result = manage_todo(**args)
+                        # Refresh cached tasks after modification
+                        _, st.session_state.admin_tasks = load_history()
+                    else:
+                        result = f"Function {name} not implemented."
+                    history.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": result,
+                        }
+                    )
 
-        with st.chat_message("assistant"):
-            st.markdown(final_content)
-        st.session_state.messages.append({"role": "assistant", "content": final_content})
-        save_message("assistant", final_content)
+                second_response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=history,
+                )
+                final_content = second_response.choices[0].message.content
+            else:
+                final_content = message.content
+
+            with st.chat_message("assistant"):
+                st.markdown(final_content)
+            st.session_state.messages.append({"role": "assistant", "content": final_content})
+            save_message("assistant", final_content)
+        except openai.APIError as e:
+            st.error(f"OpenAI API error: {e}")
+            logger.exception("OpenAI API error during chat completion")
+        except Exception:
+            st.error("An unexpected error occurred. Please try again later.")
+            logger.exception("Unexpected error during chat completion")
