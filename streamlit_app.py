@@ -1,3 +1,6 @@
+import json
+import sqlite3
+from pathlib import Path
 import streamlit as st
 from openai import OpenAI
 
@@ -9,6 +12,67 @@ st.write(
     "You can also learn how to build this app step by step by [following our tutorial](https://docs.streamlit.io/develop/tutorials/llms/build-conversational-apps)."
 )
 
+# --- Persistence layer ----------------------------------------------------- #
+DB_PATH = Path("chat_history.db")
+
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS messages(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            role TEXT,
+            content TEXT
+        )
+        """
+    )
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS admin_tasks(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task TEXT
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def load_history():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT role, content FROM messages")
+    messages = [{"role": role, "content": content} for role, content in c.fetchall()]
+    c.execute("SELECT task FROM admin_tasks")
+    admin_tasks = [row[0] for row in c.fetchall()]
+    conn.close()
+    return messages, admin_tasks
+
+
+def save_message(role: str, content: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO messages (role, content) VALUES (?, ?)",
+        (role, content),
+    )
+    conn.commit()
+    conn.close()
+
+
+def clear_history():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM messages")
+    c.execute("DELETE FROM admin_tasks")
+    conn.commit()
+    conn.close()
+    st.session_state.messages = []
+    st.session_state.admin_tasks = []
+
+
 # Ask user for their OpenAI API key via `st.text_input`.
 # Alternatively, you can store the API key in `./.streamlit/secrets.toml` and access it
 # via `st.secrets`, see https://docs.streamlit.io/develop/concepts/connections/secrets-management
@@ -16,14 +80,27 @@ openai_api_key = st.text_input("OpenAI API Key", type="password")
 if not openai_api_key:
     st.info("Please add your OpenAI API key to continue.", icon="🗝️")
 else:
-
     # Create an OpenAI client.
     client = OpenAI(api_key=openai_api_key)
 
-    # Create a session state variable to store the chat messages. This ensures that the
-    # messages persist across reruns.
+    # Initialize database and session state
+    init_db()
     if "messages" not in st.session_state:
-        st.session_state.messages = []
+        msgs, tasks = load_history()
+        st.session_state.messages = msgs
+        st.session_state.admin_tasks = tasks
+
+    # Sidebar admin controls
+    with st.sidebar:
+        if st.button("Reset conversation"):
+            clear_history()
+            st.experimental_rerun()
+        st.download_button(
+            "Export conversation",
+            data=json.dumps(st.session_state.messages, indent=2),
+            file_name="chat_history.json",
+            mime="application/json",
+        )
 
     # Display the existing chat messages via `st.chat_message`.
     for message in st.session_state.messages:
@@ -38,6 +115,7 @@ else:
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
+        save_message("user", prompt)
 
         # Generate a response using the OpenAI API.
         stream = client.chat.completions.create(
@@ -49,8 +127,9 @@ else:
             stream=True,
         )
 
-        # Stream the response to the chat using `st.write_stream`, then store it in 
+        # Stream the response to the chat using `st.write_stream`, then store it in
         # session state.
         with st.chat_message("assistant"):
             response = st.write_stream(stream)
         st.session_state.messages.append({"role": "assistant", "content": response})
+        save_message("assistant", response)
