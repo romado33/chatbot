@@ -247,6 +247,11 @@ else:
                 {"role": m["role"], "content": m["content"]}
                 for m in st.session_state.messages
             ]
+            system_message = {
+                "role": "system",
+                "content": "You are an AI administrative assistant...",
+            }
+            history = [system_message] + history
 
             try:
                 # Ask the model for a response, allowing it to call tools.
