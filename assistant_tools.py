@@ -11,13 +11,23 @@ actions an assistant might perform such as scheduling meetings,
 
 from pathlib import Path
 import sqlite3
-from typing import List
 
 DB_PATH = Path("chat_history.db")
 
+# Public functions exposed to the chat interface
+__all__ = ["schedule_meeting", "send_email", "manage_todo"]
+
 
 def schedule_meeting(topic: str, time: str) -> str:
-    """Return a confirmation message for scheduling a meeting."""
+    """Return a confirmation message for scheduling a meeting.
+
+    Parameters
+    ----------
+    topic:
+        Subject of the meeting.
+    time:
+        When the meeting should occur.
+    """
     return f"Scheduled a meeting about '{topic}' at {time}."
 
 
